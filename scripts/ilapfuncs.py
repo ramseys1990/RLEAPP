@@ -1,21 +1,24 @@
+# common standard imports
 import codecs
 import csv
 import datetime
-import json
 import os
-import pathlib
 import re
+import shutil
 import sqlite3
 import sys
-from typing import Pattern
-
-import simplekml
-from scripts.filetype import guess_mime
-import shutil
+from functools import lru_cache
 from pathlib import Path
 
+# common third party imports
+import pytz
+import simplekml
 from bs4 import BeautifulSoup
-from functools import lru_cache
+from scripts.filetype import guess_mime
+
+# LEAPP version unique imports
+import json
+from typing import Pattern
 
 os.path.basename = lru_cache(maxsize=None)(os.path.basename)
 
@@ -40,21 +43,66 @@ class OutputParameters:
         os.makedirs(os.path.join(self.report_folder_base, 'Script Logs'))
         os.makedirs(self.temp_folder)
 
+def convert_time_obj_to_utc(ts):
+    timestamp = ts.replace(tzinfo=timezone.utc)
+    return timestamp
+
+def convert_utc_human_to_timezone(utc_time, time_offset): 
+    #fetch the timezone information
+    timezone = pytz.timezone(time_offset)
+    
+    #convert utc to timezone
+    timezone_time = utc_time.astimezone(timezone)
+    
+    #return the converted value
+    return timezone_time
+
+def convert_ts_int_to_timezone(time, time_offset):
+    #convert ts_int_to_utc_human
+    utc_time = convert_ts_int_to_utc(time)
+
+    #fetch the timezone information
+    timezone = pytz.timezone(time_offset)
+    
+    #convert utc to timezone
+    timezone_time = utc_time.astimezone(timezone)
+    
+    #return the converted value
+    return timezone_time
+
+def timestampsconv(webkittime):
+    unix_timestamp = webkittime + 978307200
+    finaltime = datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+    return(finaltime)
+
+def convert_ts_human_to_utc(ts): #This is for timestamp in human form
+    if '.' in ts:
+        ts = ts.split('.')[0]
+        
+    dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S') #Make it a datetime object
+    timestamp = dt.replace(tzinfo=timezone.utc) #Make it UTC
+    return timestamp
+
+def convert_ts_int_to_utc(ts): #This int timestamp to human format & utc
+    timestamp = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return timestamp
+
+def get_birthdate(date):
+    ns_date = date + 978307200
+    utc_date = datetime.utcfromtimestamp(ns_date)
+    return utc_date.strftime('%d %B %Y') if utc_date.year != 1604 else utc_date.strftime('%d %B')
 
 def is_platform_linux():
     '''Returns True if running on Linux'''
     return sys.platform == 'linux'
 
-
 def is_platform_macos():
     '''Returns True if running on macOS'''
     return sys.platform == 'darwin'
 
-
 def is_platform_windows():
     '''Returns True if running on Windows'''
     return sys.platform == 'win32'
-
 
 def sanitize_file_path(filename, replacement_char='_'):
     '''
@@ -62,13 +110,11 @@ def sanitize_file_path(filename, replacement_char='_'):
     '''
     return re.sub(r'[*?:"<>|\'\r\n]', replacement_char, filename)
 
-
 def sanitize_file_name(filename, replacement_char='_'):
     '''
     Removes illegal characters (for windows) from the string passed.
     '''
     return re.sub(r'[\\/*?:"<>|\'\r\n]', replacement_char, filename)
-
 
 def get_next_unused_name(path):
     '''Checks if path exists, if it does, finds an unused name by appending -xx
@@ -90,26 +136,24 @@ def get_next_unused_name(path):
         num += 1
     return os.path.join(folder, new_name)
 
-
 def open_sqlite_db_readonly(path):
     '''Opens an sqlite db in read-only mode, so original db (and -wal/journal are intact)'''
     if is_platform_windows():
-        if path.startswith('\\\\?\\UNC\\'):  # UNC long path
+        if path.startswith('\\\\?\\UNC\\'): # UNC long path
             path = "%5C%5C%3F%5C" + path[4:]
-        elif path.startswith('\\\\?\\'):  # normal long path
+        elif path.startswith('\\\\?\\'):    # normal long path
             path = "%5C%5C%3F%5C" + path[4:]
-        elif path.startswith('\\\\'):  # UNC path
+        elif path.startswith('\\\\'):       # UNC path
             path = "%5C%5C%3F%5C\\UNC" + path[1:]
-        else:  # normal path
+        else:                               # normal path
             path = "%5C%5C%3F%5C" + path
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-
 
 def does_column_exist_in_db(db, table_name, col_name):
     '''Checks if a specific col exists'''
     col_name = col_name.lower()
     try:
-        db.row_factory = sqlite3.Row  # For fetching columns by name
+        db.row_factory = sqlite3.Row # For fetching columns by name
         query = f"pragma table_info('{table_name}');"
         cursor = db.cursor()
         cursor.execute(query)
@@ -121,7 +165,6 @@ def does_column_exist_in_db(db, table_name, col_name):
         print(f"Query error, query={query} Error={str(ex)}")
         pass
     return False
-
 
 def does_table_exist(db, table_name):
     '''Checks if a table with specified name exists in an sqlite db'''
@@ -136,32 +179,33 @@ def does_table_exist(db, table_name):
         logfunc(f"Query error, query={query} Error={str(ex)}")
     return False
 
-
 class GuiWindow:
     '''This only exists to hold window handle if script is run from GUI'''
     window_handle = None  # static variable
-    progress_bar_total = 0
-    progress_bar_handle = None
 
     @staticmethod
-    def SetProgressBar(n):
-        if GuiWindow.progress_bar_handle:
-            GuiWindow.progress_bar_handle.UpdateBar(n)
-
+    def SetProgressBar(n, total):
+        if GuiWindow.window_handle:
+            progress_bar = GuiWindow.window_handle.nametowidget('!progressbar')
+            progress_bar.config(value=n)
 
 def logfunc(message=""):
+    def redirect_logs(string):
+        log_text.insert('end', string)
+        log_text.see('end')
+        log_text.update()
+
+    if GuiWindow.window_handle:
+        log_text = GuiWindow.window_handle.nametowidget('logs_frame.log_text')
+        sys.stdout.write = redirect_logs
+
     with open(OutputParameters.screen_output_file_path, 'a', encoding='utf8') as a:
         print(message)
         a.write(message + '<br>' + OutputParameters.nl)
 
-    if GuiWindow.window_handle:
-        GuiWindow.window_handle.refresh()
-
-
 def logdevinfo(message=""):
     with open(OutputParameters.screen_output_file_path_devinfo, 'a', encoding='utf8') as b:
         b.write(message + '<br>' + OutputParameters.nl)
-
 
 """ def deviceinfoin(ordes, kas, vas, sources): # unused function
     sources = str(sources)
@@ -170,7 +214,6 @@ def logdevinfo(message=""):
     datainsert = (ordes, kas, vas, sources,)
     cursor.execute('INSERT INTO devinf (ord, ka, va, source)  VALUES(?,?,?,?)', datainsert)
     db.commit() """
-
 
 def html2csv(reportfolderbase):
     # List of items that take too long to convert or that shouldn't be converted
@@ -213,7 +256,6 @@ def html2csv(reportfolderbase):
                             writer = csv.writer(csvfile, quotechar='"', quoting=csv.QUOTE_ALL)
                             writer.writerows(output_rows)
 
-
 def tsv(report_folder, data_headers, data_list, tsvname, source_file=None):
     report_folder = report_folder.rstrip('/')
     report_folder = report_folder.rstrip('\\')
@@ -226,7 +268,7 @@ def tsv(report_folder, data_headers, data_list, tsvname, source_file=None):
         os.makedirs(tsv_report_folder)
 
     if os.path.exists(os.path.join(tsv_report_folder, tsvname + '.tsv')):
-        with codecs.open(os.path.join(tsv_report_folder, tsvname + '.tsv'), 'a') as tsvfile:
+        with codecs.open(os.path.join(tsv_report_folder, tsvname + '.tsv'), 'a', 'utf-8-sig') as tsvfile:
             tsv_writer = csv.writer(tsvfile, delimiter='\t')
             for i in data_list:
                 if source_file == None:
@@ -251,7 +293,6 @@ def tsv(report_folder, data_headers, data_list, tsvname, source_file=None):
                     row_data.append(source_file)
                     tsv_writer.writerow(tuple(row_data))
 
-
 def timeline(report_folder, tlactivity, data_list, data_headers):
     report_folder = report_folder.rstrip('/')
     report_folder = report_folder.rstrip('\\')
@@ -264,35 +305,34 @@ def timeline(report_folder, tlactivity, data_list, data_headers):
         cursor = db.cursor()
         cursor.execute('''PRAGMA synchronous = EXTRA''')
         cursor.execute('''PRAGMA journal_mode = WAL''')
+        db.commit()
     else:
         os.makedirs(tl_report_folder)
         # create database
         tldb = os.path.join(tl_report_folder, 'tl.db')
-        db = sqlite3.connect(tldb, isolation_level='exclusive')
+        db = sqlite3.connect(tldb, isolation_level = 'exclusive')
         cursor = db.cursor()
         cursor.execute(
             """
-        CREATE TABLE data(key TEXT, activity TEXT, datalist TEXT)
-        """
+            CREATE TABLE data(key TEXT, activity TEXT, datalist TEXT)
+            """
         )
         db.commit()
-
+    
     a = 0
     length = (len(data_list))
-    while a < length:
-        modifiedList = list(map(lambda x, y: x + ': ' + str(y), data_headers, data_list[a]))
-        cursor.executemany("INSERT INTO data VALUES(?,?,?)", [(str(data_list[a][0]), tlactivity, str(modifiedList))])
+    while a < length: 
+        modifiedList = list(map(lambda x, y: x.upper() + ': ' +  str(y), data_headers, data_list[a]))
+        cursor.executemany("INSERT INTO data VALUES(?,?,?)", [(str(data_list[a][0]), tlactivity.upper(), str(modifiedList))])
         a += 1
     db.commit()
     db.close()
-
 
 def kmlgen(report_folder, kmlactivity, data_list, data_headers):
     report_folder = report_folder.rstrip('/')
     report_folder = report_folder.rstrip('\\')
     report_folder_base, tail = os.path.split(report_folder)
     kml_report_folder = os.path.join(report_folder_base, '_KML Exports')
-
     if os.path.isdir(kml_report_folder):
         latlongdb = os.path.join(kml_report_folder, '_latlong.db')
         db = sqlite3.connect(latlongdb)
@@ -306,14 +346,14 @@ def kmlgen(report_folder, kmlactivity, data_list, data_headers):
         db = sqlite3.connect(latlongdb)
         cursor = db.cursor()
         cursor.execute(
-            """
+        """
         CREATE TABLE data(key TEXT, latitude TEXT, longitude TEXT, activity TEXT)
         """
-        )
+            )
         db.commit()
-
+    
     kml = simplekml.Kml(open=1)
-
+    
     a = 0
     length = (len(data_list))
     while a < length:
@@ -351,7 +391,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-
 
 def utf8_in_extended_ascii(input_string, *, raise_on_unexpected=False):
     """Returns a tuple of bool (whether mis-encoded utf-8 is present) and str (the converted string)"""
@@ -411,7 +450,6 @@ def utf8_in_extended_ascii(input_string, *, raise_on_unexpected=False):
 
     return mis_encoded_utf8_present, "".join(output)
 
-
 def media_to_html(media_path, files_found, report_folder):
     """
     Show selected media files in the HTML report with proper relative pathing.
@@ -428,29 +466,29 @@ def media_to_html(media_path, files_found, report_folder):
     
     def media_path_filter(name):
         return media_path in name
-    
+
     def relative_paths(source, splitter):
         splitted_a = source.split(splitter)
         for x in splitted_a:
             if 'LEAPP_Reports_' in x:
                 report_folder = x
-                
+
         splitted_b = source.split(report_folder)
         return '.' + splitted_b[1]
-    
+
     platform = is_platform_windows()
     if platform:
         media_path = media_path.replace('/', '\\')
         splitter = '\\'
     else:
         splitter = '/'
-        
+
     thumb = media_path
     for match in filter(media_path_filter, files_found):
         filename = os.path.basename(match)
-        if filename.startswith('~') or filename.startswith('._'):
+        if filename.startswith('~') or filename.startswith('._') or filename != media_path:
             continue
-        
+
         dirs = os.path.dirname(report_folder)
         dirs = os.path.dirname(dirs)
         env_path = os.path.join(dirs, 'temp')
@@ -473,15 +511,14 @@ def media_to_html(media_path, files_found, report_folder):
             mimetype = ''
         
         if 'video' in mimetype:
-            thumb = f'<video width="320" height="240" controls="controls" preload="none"><source src="{source}" type="video/mp4">Your browser does not support the video tag.</video>'
+            thumb = f'<video width="320" height="240" controls="controls"><source src="{source}" type="video/mp4" preload="none">Your browser does not support the video tag.</video>'
         elif 'image' in mimetype:
             thumb = f'<a href="{source}" target="_blank"><img src="{source}"width="300"></img></a>'
         elif 'audio' in mimetype:
             thumb = f'<audio controls><source src="{source}" type="audio/ogg"><source src="{source}" type="audio/mpeg">Your browser does not support the audio element.</audio>'
         else:
-            thumb = f'<a href="{source}" target="_blank"> Link to {mimetype} </>'
+            thumb = f'<a href="{source}" target="_blank"> Link to {filename} file</>'
     return thumb
-
 
 def usergen(report_folder, data_list_usernames):
     report_folder = report_folder.rstrip('/')
@@ -521,7 +558,6 @@ def usergen(report_folder, data_list_usernames):
     db.commit()
     db.close()
 
-
 def ipgen(report_folder, data_list_ipaddress):
     report_folder = report_folder.rstrip('/')
     report_folder = report_folder.rstrip('\\')
@@ -560,18 +596,15 @@ def ipgen(report_folder, data_list_ipaddress):
     db.commit()
     db.close()
 
-
 def _count_generator(reader):
     b = reader(1024 * 1024)
     while b:
         yield b
         b = reader(1024 * 1024)
 
-
 def _get_line_count(file):
     with open(file, 'rb') as fp:
         return sum(buffer.count(b'\n') for buffer in _count_generator(fp.raw.read))
-
 
 def gather_hashes_in_file(file_found: str, regex: Pattern):
     target_hashes = {}
