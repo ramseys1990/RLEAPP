@@ -23,8 +23,10 @@ import os
 
 # Updated to use pypdf vs PyPDF2 as PyPDF2 is deprecated
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
 from scripts.artifact_report import ArtifactHtmlReport
-from scripts.ilapfuncs import logfunc, tsv, timeline, is_platform_windows, kmlgen
+from scripts.ilapfuncs import logfunc, tsv, timeline, kmlgen
 
 # Class to maintain information on the User
 # TODO: Finish building out some of the information placeholders
@@ -44,6 +46,49 @@ class AccountInfo:
 
         self.tempList = []
         self.refreshTokenLoginLists = []
+
+        # IDEA: Use the categories of each event type to store the "data blocks"?
+        # AUTH:     Contains Refresh Token List -       Currently capable of processing
+        #           This contains GPS coordinates among other items
+        # GATEWAY   Contains Payment sent for ACH -     WIP
+        #           This contains accounts that money has been sent as well as the account nickname (FROMNICKNAME and PAYORNAME)
+        #           Payment Sent for ACH Off-Us Service (ExternalTransferExtract) 
+        #               Fields of interest:
+        #                   FROMACCTNUM - 
+        #                   FROMACCTTYPE - 
+        #                   PYMTAMT - 
+        #                   TOACCTNUM - 
+        #                   TOACCTTYPE - 
+        #                   TONICKNAME - 
+        #                   PAYORNAME -
+        #               
+        # PAYMENTS  
+        #           Quick Pay Add
+        #               Fields of interest:
+        #                   FROMEMAIL - 
+        #                   FROMNICKNAME - 
+        #                   PAYMENTTYPE - 
+        #                   PYMTAMT - 
+        #                   RECEIVERNETWORK - ?
+        #                   RECEIVERORG - (BANK, IE BBT)
+        #                   RECEIVINGPROFILEID - 
+        #                   TOMOBILEPHONE - 
+        #                   TONICKNAME
+        #
+        #           ExtAcct-Add-Active
+        #               Fields of interest:
+        #                   CLIENTSOURCEIP - 
+        #                   CUSTNAME - 
+        #                   EXTACCTBANKNAME - 
+        #                   EXTACCTROUTINGNUM - 
+        #                   PARTYEMAILADDRESSTEXT - 
+        #                   TOACCTNUM - 
+        #                   TONICKNAME - 
+        #                   VERF_METH -
+        #           ExternalTransferAddTrialDeposits
+        
+        # ORCH
+        self.eventCategories = ['GATEWAY', 'AUTH', 'PAYMENTS', 'ORCH', ]
         self.refreshTokenDict = {
             'TIMESTAMP':"",
             'USERNAME':"",
@@ -80,6 +125,9 @@ class AccountInfo:
             'FAILED_DVC_TRUST_RULE':"",
         }
 
+        self.eventCategoryDict = {
+            'GATEWAY'
+        }
     def add_username(self, username):
         self.username.append(username)
     
@@ -185,11 +233,14 @@ def get_chaseReturnsRTL(files_found, report_folder, seeker, wrap_text, time_offs
         filename = os.path.basename(file_found)
         
         pdfFileObj = open(file_found,'rb')
-        pdfmagic = pdfFileObj.read(4)
-        # TODO: Fix this, this needs to verify that it is a correct PDF file
-#        if (pdfmagic!='%PDF'):
-#            return
-        pdfReader= PdfReader(pdfFileObj)
+
+        try:
+            pdfReader= PdfReader(pdfFileObj)
+        except PdfReadError:
+            logfunc("Invalid PDF File!")
+        else:
+            pass
+        
         x = len(pdfReader.pages)
         #x=pdfreader.numPages
         
@@ -202,6 +253,9 @@ def get_chaseReturnsRTL(files_found, report_folder, seeker, wrap_text, time_offs
             text = text.replace('\n', '' ) + pageObj.extract_text()
             
         while index < len(text):
+            # index should be the first number of the date of a "data block"
+            # We should beable to take the index, add 20 (to remove the date from our "data block", and check against the next x amount of characters for headers)
+
 
             # If this is true, then this is the first time we've reached User Data or
             # it means we have exhausted all of our Refresh Token Login Headers and are now at a new user.
@@ -295,7 +349,6 @@ def get_chaseReturnsRTL(files_found, report_folder, seeker, wrap_text, time_offs
 
             index = endPoint
             subtext = text[startPoint:endPoint]
-            templist = []
 
             # We search for the / after the Refresh Token Login Header to get us as close to the time as possible (this appears to be a fixed length on here?)
             # We then subtract 2 to give us the beginning of the date.

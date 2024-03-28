@@ -4,3 +4,4 @@ __pycache__
 *.egg-info
 .gitattributes
 RLEAPP_Reports*
+file.txt
