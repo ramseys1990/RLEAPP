@@ -9,7 +9,7 @@ rleapp_contributors = [
     [ 'Geraldine Blay', 'https://gforce4n6.blogspot.com', '@i_am_the_gia', 'https://github.com/gforce4n6'],
     [ 'Kevin Pagano', 'https://stark4n6.com', '@KevinPagano3', 'https://github.com/stark4n6'],
     [ 'Shawn Ramsey', '', '@RamseyS1990', 'https://github.com/ramseys1990'],
-    [ 'Upintheairsheep2','','','https://github.com/upintheairsheep2']
+    [ 'Upintheairsheep2','','','https://github.com/upintheairsheep2'],
     [ 'James Habben', 'https://4n6ir.com/','@JamesHabben','https://github.com/JamesHabben'],
     [ 'Evangelos Dragonas', 'https://atropos4n6.com/','@theAtropos4n6','https://github.com/theAtropos4n6'],
     [ 'Panos Nakoutis', '', '@4n6equals10',''],
